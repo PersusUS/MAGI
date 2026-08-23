@@ -182,11 +182,25 @@ def classify_answer(question: str, personality: str, answer: str, key: str = Non
     return {'status': 'conditional', 'conditions': cleaned_conditions}
 
 
-def get_stt_key(key: str = None) -> str:
+PLACEHOLDER_HINTS = ('your_', '_here', 'changeme', 'placeholder', 'example')
+
+
+def _is_usable_secret(value: str) -> bool:
+    value = (value or '').strip()
+    if not value:
+        return False
     # OpenRouter has no /audio/transcriptions route, and an sk-or- key is
     # rejected by OpenAI, so an OpenRouter key can never drive Whisper.
+    if value.startswith('sk-or-'):
+        return False
+    lowered = value.lower()
+    return not any(hint in lowered for hint in PLACEHOLDER_HINTS)
+
+
+def get_stt_key(key: str = None) -> str:
     for candidate in (os.getenv('STT_API_KEY'), key, os.getenv('OPENAI_API_KEY')):
-        if candidate and not candidate.startswith('sk-or-'):
+        candidate = (candidate or '').strip()
+        if _is_usable_secret(candidate):
             return candidate
     return None
 
@@ -197,24 +211,34 @@ def transcribe_audio(audio_bytes: bytes, key: str = None, filename: str = 'speec
     api_key = get_stt_key(key)
     if not api_key:
         raise Exception(
-            'Whisper no disponible: la clave de OpenRouter no sirve para transcribir. '
+            'Whisper no disponible: no hay una clave válida para transcribir. '
             'Usa el reconocimiento del navegador (Chrome/Edge) o define STT_API_KEY en .env.'
         )
 
     api_base = os.getenv('STT_BASE_URL', 'https://api.openai.com/v1').rstrip('/')
     model = os.getenv('STT_MODEL', 'whisper-1')
+    language = (os.getenv('STT_LANGUAGE') or 'es').strip().lower()
+
+    data = {'model': model}
+    if language and language != 'auto':
+        data['language'] = language
 
     try:
         r = requests.post(
             f'{api_base}/audio/transcriptions',
             headers={'Authorization': f'Bearer {api_key}'},
             files={'file': (filename, audio_bytes, content_type)},
-            data={'model': model, 'language': 'es'},
+            data=data,
             timeout=60
         )
     except Exception as e:
         raise Exception(f'No se pudo contactar el servicio de transcripción: {e}')
 
+    if r.status_code in (401, 403):
+        raise Exception(
+            f'Whisper rechazó la clave ({r.status_code}). Define una clave válida '
+            f'para {api_base} en STT_API_KEY (.env) o en el campo de acceso.'
+        )
     if r.status_code != 200:
         raise Exception(f'Whisper devolvió {r.status_code}: {r.text[:200]}')
 

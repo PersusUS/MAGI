@@ -420,8 +420,11 @@
 
         const headers = {};
         const keyInput = document.getElementById('key');
-        if (keyInput && keyInput.value) {
-            headers['X-API-Key'] = keyInput.value;
+        const keyVal = keyInput ? keyInput.value.trim() : '';
+        // Skip placeholder/template keys and OpenRouter keys (no Whisper access)
+        if (keyVal && !/^sk-or-/i.test(keyVal) &&
+            !/your_|_here|changeme|placeholder|example/i.test(keyVal)) {
+            headers['X-API-Key'] = keyVal;
         }
 
         fetch('/api/transcribe', { method: 'POST', body: form, headers })

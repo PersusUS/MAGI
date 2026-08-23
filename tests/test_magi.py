@@ -50,6 +50,42 @@ class TestMagiAI(unittest.TestCase):
             key = ai.get_stt_key('sk-or-v1-fakekey')
             self.assertIsNone(key)
 
+    def test_stt_key_rejection_of_placeholders(self):
+        """Test that template/placeholder keys never reach the Whisper API."""
+        with patch.dict('os.environ', {'STT_API_KEY': '', 'OPENAI_API_KEY': ''}, clear=False):
+            self.assertIsNone(ai.get_stt_key('your_openai_api_key_for_whisper_here'))
+            self.assertIsNone(ai.get_stt_key('CHANGEME'))
+            self.assertIsNone(ai.get_stt_key('   '))
+            self.assertIsNone(ai.get_stt_key(None))
+
+    def test_stt_key_prefers_env_over_argument(self):
+        """Test that STT_API_KEY takes precedence over an invalid UI-provided key."""
+        with patch.dict('os.environ', {'STT_API_KEY': 'sk-env-real-key', 'OPENAI_API_KEY': ''}, clear=False):
+            self.assertEqual(ai.get_stt_key('sk-or-v1-fakekey'), 'sk-env-real-key')
+
+    def test_transcribe_audio_payload_uses_configured_language(self):
+        """Test that Whisper payload honours STT_LANGUAGE, omitting it on 'auto'."""
+        captured = {}
+
+        class FakeResponse:
+            status_code = 200
+
+            def json(self):
+                return {'text': 'hola mundo'}
+
+        with patch('requests.post') as mock_post, \
+                patch.dict('os.environ', {
+                    'STT_API_KEY': 'sk-test-key',
+                    'STT_LANGUAGE': 'auto',
+                    'STT_BASE_URL': 'https://api.openai.com/v1'
+                }, clear=False):
+            mock_post.return_value = FakeResponse()
+            ai.transcribe_audio(b'\x00\x01', filename='speech.webm')
+            _, kwargs = mock_post.call_args
+            captured['data'] = kwargs.get('data')
+
+        self.assertEqual(captured['data'], {'model': 'whisper-1'})
+
     def test_stt_key_acceptance_of_openai_key(self):
         """Test that valid OpenAI / STT keys are accepted for Whisper."""
         key = ai.get_stt_key('sk-proj-validkey')
